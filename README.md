@@ -99,3 +99,5 @@ echo 4 | sudo tee /sys/block/nvme1n1/queue/iosched/slice_idle
 cat /sys/block/nvme1n1/queue/iosched/slice_idle
 4
 ```
+
+### fio experiments
