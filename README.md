@@ -1,6 +1,8 @@
 # SSD-based Dynamic Graph Vector Index Study
 
-This repository is a clone of FreshDiskANN (https://github.com/microsoft/DiskANN/tree/diskv2) system, which is a variant of DiskANN (NeurIPS 2019) supporting both vector search and vector updates. The compile and build instructions can be followed from the FreshDiskANN repo. We modified FreshDiskANN to fix some bugs. 
+This repository is a clone of FreshDiskANN (https://github.com/microsoft/DiskANN/tree/diskv2) system, which is a variant of DiskANN (NeurIPS 2019) supporting both vector search and vector updates. The compile and build instructions can be followed from the FreshDiskANN repo. 
+
+We add code to log the `delete`, `insert`, and `patch` in order to extract the search performance in different phases of vector updates. We also modified FreshDiskANN to fix some bugs. 
 
 All experiments are run on two different NVMe SSDs - NAND (3.84 TB Samsung PM9A1 SSD) and Optane (750 GB Intel P4800X NVMe SSD).
 
