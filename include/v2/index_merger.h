@@ -13,6 +13,8 @@
 #include <vector>
 #include "windows_customizations.h"
 
+#include <set>
+
 namespace diskann {
   template<typename T, typename TagT = uint32_t>
   class StreamingMerger {
@@ -50,6 +52,8 @@ namespace diskann {
                                  std::string &working_folder);
     // merge all memory indices into the disk index and write out new disk index
     void mergeImpl();
+
+    void set_ioprio(int tid);
 
    private:
     /* insert related funcs */
@@ -180,5 +184,8 @@ namespace diskann {
     bool _single_file_index = false;
 
     std::string TMP_FOLDER;
+
+    std::set<int> threadSet;
+    std::mutex threadSet_mtx;
   };
 };  // namespace diskann

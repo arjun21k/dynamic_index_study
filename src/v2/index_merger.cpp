@@ -21,15 +21,16 @@
 #include "logger.h"
 #include "ann_exception.h"
 
-#include <cstdio>
+#include <sys/syscall.h>
+#include <linux/ioprio.h>
 
 #define SECTORS_PER_MERGE (uint64_t) 65536
 // max number of points per mem index being merged -- 32M
 #define MAX_PTS_PER_MEM_INDEX (uint64_t)(1 << 25)
 #define INDEX_OFFSET (uint64_t)(MAX_PTS_PER_MEM_INDEX * 4)
-#define MAX_INSERT_THREADS (uint64_t) 19
-#define MAX_N_THREADS (uint64_t) 19
-#define NUM_INDEX_LOAD_THREADS (uint64_t) 19
+#define MAX_INSERT_THREADS (uint64_t) 20
+#define MAX_N_THREADS (uint64_t) 20
+#define NUM_INDEX_LOAD_THREADS (uint64_t) 20
 #define PER_THREAD_BUF_SIZE (uint64_t)(65536 * 64 * 4)
 
 #define PQ_FLASH_INDEX_MAX_NODES_TO_CACHE 200000
@@ -203,6 +204,20 @@ namespace diskann {
   template<typename T, typename TagT>
   void StreamingMerger<T, TagT>::insert_mem_vec(const T *      mem_vec,
                                                 const uint32_t offset_id) {
+    //std::cout << "Insert_mem_vec, pid = " << getpid() << " , tid = " << syscall(SYS_gettid) << std::endl;
+    threadSet_mtx.lock();
+    set_ioprio(syscall(SYS_gettid));
+    threadSet_mtx.unlock();
+                /*// Get I/O prio
+		int tid = syscall(SYS_gettid); 
+                int ret = syscall(SYS_ioprio_get, IOPRIO_WHO_PROCESS, tid);
+                if (ret == -1) {
+                   std::cout << "Error getting I/O priority for tread id: " << tid << " - " << strerror(errno) << std::endl;
+                }
+                int ret_class = IOPRIO_PRIO_CLASS(ret);
+                int ret_data = IOPRIO_PRIO_DATA(ret);
+                std::cout << "Insert mem vec, pid = " << getpid() << ", Current I/O priority class: " << ret_class << ", data: " << ret_data << " for thread id = " << tid << std::endl;*/
+
     Timer timer;
     float insert_time, delta_time;
     // START: mem_vec has no ID, no presence in system
@@ -467,13 +482,13 @@ namespace diskann {
     int u_count = 0;*/
     // process disk deleted tags
     for (uint32_t i = 0; i < this->disk_npts; i++) {
-    	TagT i_tag = this->disk_tags[i];
-    	if (this->deleted_tags.find(i_tag) != this->deleted_tags.end()) {
-    	  this->disk_deleted_ids.insert(i);
-    	}
-    	/*if (this->u_deleted_tags.find(i_tag) != this->u_deleted_tags.end()) {
-    	  u_count++;
-    	}*/
+      TagT i_tag = this->disk_tags[i];
+      if (this->deleted_tags.find(i_tag) != this->deleted_tags.end()) {
+        this->disk_deleted_ids.insert(i);
+      }
+      /*if (this->u_deleted_tags.find(i_tag) != this->u_deleted_tags.end()) {
+	u_count++;
+      }*/
     }
     diskann::cout << "Found " << this->disk_deleted_ids.size()
                   << " tags to delete from SSD-DiskANN\n";
@@ -1369,7 +1384,34 @@ namespace diskann {
   }
 
   template<typename T, typename TagT>
+  void StreamingMerger<T, TagT>::set_ioprio(int tid) {
+	  if (threadSet.count(tid) == 0) {
+		threadSet.insert(tid);
+	  	int ioprio = IOPRIO_PRIO_VALUE(IOPRIO_CLASS_BE, 4);
+	  	// Set I/O prio
+                if (syscall(SYS_ioprio_set, IOPRIO_WHO_PROCESS, tid, ioprio) == 0) {
+                        std::cout << "MergeImpl, successfully set I/O priority for pid = " << getpid() << ", thread id = " << tid << std::endl;
+                } else {
+                        std::cout << "MergeImpl, Error setting I/O priority for thread id = " << tid << std::endl;
+                }
+                // Get I/O prio
+                int ret = syscall(SYS_ioprio_get, IOPRIO_WHO_PROCESS, tid);
+                if (ret == -1) {
+                   std::cout << "MergeImpl, Error getting I/O priority for tread id: " << tid << " - " << strerror(errno) << std::endl;
+                }
+                int ret_class = IOPRIO_PRIO_CLASS(ret);
+                int ret_data = IOPRIO_PRIO_DATA(ret);
+                std::cout << "MergeImpl, pid = " << getpid() << ", Current I/O priority class: "
+			<< ret_class << ", data: " << ret_data << " for thread id = " << tid << std::endl;
+	  }
+  }
+
+  template<typename T, typename TagT>
   void StreamingMerger<T, TagT>::mergeImpl() {
+    threadSet_mtx.lock();
+    set_ioprio(syscall(SYS_gettid));
+    threadSet_mtx.unlock();
+
     // populate deleted IDs
     this->compute_deleted_ids();
     // BEGIN -- graph on disk has deleted references, maybe some holes
@@ -1649,17 +1691,6 @@ namespace diskann {
     }
 
     diskann::cout << "Patch Phase: End\n";
-
-    // Delete intermediate LTI index, i.e., temp_disk_index
-    // int re = std::remove(this->temp_disk_index_path.c_str());
-    // if (re == 0) 
-    //     std::cout << "File '" << this->temp_disk_index_path << "' successfully deleted." << std::endl;
-    // re = std::remove(this->temp_pq_coords_path.c_str());
-    // if (re == 0)
-    //     std::cout << "File '" << this->temp_pq_coords_path << "' successfully deleted." << std::endl;
-    // re = std::remove(this->temp_tags_path.c_str());
-    // if (re == 0)
-    //     std::cout << "File '" << this->temp_tags_path << "' successfully deleted." << std::endl;
 
     // destruct PQFlashIndex
     delete this->disk_index;

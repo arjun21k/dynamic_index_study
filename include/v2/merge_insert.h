@@ -28,6 +28,8 @@
 
 #include "windows_customizations.h"
 
+#include <set>
+
 #define MERGE_TH 18000000
 
 namespace diskann {
@@ -152,5 +154,7 @@ namespace diskann {
     std::string _disk_index_prefix_in;
     std::string _disk_index_prefix_out;
     std::string _deleted_tags_file;
+
+    std::set<int> threadSet;
   };
 };  // namespace diskann

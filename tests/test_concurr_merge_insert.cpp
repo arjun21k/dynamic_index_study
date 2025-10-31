@@ -30,9 +30,12 @@
 
 #include <sys/resource.h>
 
-#define NUM_INSERT_THREADS 4
+#include <sys/syscall.h>
+#include <linux/ioprio.h>
+
+#define NUM_INSERT_THREADS 2
 #define NUM_DELETE_THREADS 1
-#define NUM_SEARCH_THREADS 7
+#define NUM_SEARCH_THREADS 8
 // random number generator
 std::random_device dev;
 std::mt19937       rng(dev());
@@ -247,9 +250,29 @@ void search_disk_index(const std::string              &index_prefix_path,
 }
 
 template<typename T, typename TagT = uint32_t>
+void get_ioprio() {
+  int tid = syscall(SYS_gettid);
+  // Get I/O prio
+  int ret = syscall(SYS_ioprio_get, IOPRIO_WHO_PROCESS, tid);
+  if (ret == -1) {
+    std::cout << "SearchKernel, Error getting I/O priority for tread id: "
+              << tid << " - " << strerror(errno) << std::endl;
+  }
+  int ret_class = IOPRIO_PRIO_CLASS(ret);
+  int ret_data = IOPRIO_PRIO_DATA(ret);
+  std::cout << "SearchKernel, pid = " << getpid()
+            << ", Current I/O priority class: " << ret_class
+            << ", data: " << ret_data << " for thread id = " << tid
+            << std::endl;
+}
+
+template<typename T, typename TagT = uint32_t>
 void search_kernel(diskann::MergeInsert<T>        &merge_insert,
                    const tsl::robin_set<uint32_t> &active_tags,
                    bool                            print_stats = false) {
+  std::cout << std::endl;
+  std::cout << "seach_kernel() pid = " << getpid()
+            << " , tid = " << syscall(SYS_gettid) << std::endl;
   uint64_t recall_at = params[std::string("recall_k")];
 
   /*struct rlimit limit;
@@ -344,6 +367,8 @@ void search_kernel(diskann::MergeInsert<T>        &merge_insert,
 #pragma omp parallel for num_threads(NUM_SEARCH_THREADS)
     for (_s64 i = 0; i < (int64_t) query_num; i++) {
       auto qs = std::chrono::high_resolution_clock::now();
+      if (i == 1 || i == 4999 || i == 9999)
+        get_ioprio<T>();
       merge_insert.search_sync(query + (i * query_aligned_dim), recall_at, L,
                                (query_result_tags.data() + (i * recall_at)),
                                query_result_dists.data() + (i * recall_at),
@@ -420,8 +445,6 @@ void insertion_kernel(diskann::MergeInsert<T> &merge_insert,
   _s64                i;
   std::vector<double> insert_latencies(npts, 0);
   diskann::Timer      timer;
-  std::cout << "Insertion_kernel, going to insert " << (_s64) npts
-            << " points\n";
 #pragma omp parallel for num_threads(NUM_INSERT_THREADS)
   for (i = 0; i < (_s64) npts; i++) {
     diskann::Timer insert_timer;
@@ -463,8 +486,6 @@ void deletion_kernel(diskann::MergeInsert<T> &merge_insert,
     exit(-1);
   }
   std::this_thread::sleep_for(std::chrono::milliseconds(1000));
-  std::cout << "Deletion_kernel, del_tags size = " << del_tags.size()
-            << std::endl;
   diskann::Timer timer;
   for (auto iter : del_tags) {
     merge_insert.lazy_delete(iter);
@@ -476,6 +497,9 @@ void deletion_kernel(diskann::MergeInsert<T> &merge_insert,
 
 template<typename T>
 void merge_kernel(diskann::MergeInsert<T> &merge_insert) {
+  std::cout << std::endl;
+  std::cout << "merge_kernel() pid = " << getpid()
+            << " , tid = " << syscall(SYS_gettid) << std::endl;
   merge_insert.final_merge();
 }
 
@@ -484,6 +508,9 @@ void run_iter(diskann::MergeInsert<T>  &merge_insert,
               const std::string        &mem_prefix,
               tsl::robin_set<uint32_t> &active_set,
               tsl::robin_set<uint32_t> &inactive_set) {
+  std::cout << "run_iter() pid = " << getpid()
+            << " , tid = " << syscall(SYS_gettid) << std::endl;
+
   // files for mem-DiskANN
   std::string mem_pts_file = mem_prefix + ".data_orig";
   std::string mem_tags_file = mem_prefix + ".tags_orig";
@@ -757,7 +784,7 @@ int main(int argc, char **argv) {
 
   // hard-coded params
   params[std::string("disk_search_node_cache_count")] = 100;
-  params[std::string("disk_search_nthreads")] = 7;
+  params[std::string("disk_search_nthreads")] = 8;
   params[std::string("beam_width")] = 4;
   params[std::string("mem_l_index")] = L_mem;
   mem_alpha = alpha_mem;

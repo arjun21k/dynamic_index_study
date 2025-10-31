@@ -44,6 +44,9 @@
 
 #include "logger.h"
 
+#include <sys/syscall.h>
+#include <linux/ioprio.h>
+
 #include "Neighbor_Tag.h"
 #ifdef _WINDOWS
 #ifdef USE_BING_INFRA
@@ -99,6 +102,7 @@ namespace diskann {
     _disk_index_prefix_in = disk_prefix_in;
     _disk_index_prefix_out = disk_prefix_out;
     _dist_comp = dist;
+
 #ifdef _WINDOWS
 #ifndef USE_BING_INFRA
     reader.reset(new WindowsAlignedFileReader());
@@ -241,6 +245,31 @@ namespace diskann {
     void MergeInsert<T,TagT>::search_sync(const T* query, const uint64_t K, const uint64_t search_L,
                      TagT* tags, float * distances, QueryStats * stats)
     {
+	int tid = syscall(SYS_gettid);
+	if (threadSet.count(tid) == 0) {
+		threadSet.insert(tid);
+		//counter.fetch_add(1);
+		int ioprio = IOPRIO_PRIO_VALUE(IOPRIO_CLASS_RT, 0);
+		//int tid = syscall(SYS_gettid); //std::this_thread::get_id();
+		std::cout << "MergeInsert seach_sync() pid = " << getpid()
+        	    << " , tid = " << tid << std::endl;
+                
+		// Set I/O prio
+		if (syscall(SYS_ioprio_set, IOPRIO_WHO_PROCESS, tid, ioprio) == 0) {
+			std::cout << "Successfully set I/O priority for thread id = " << tid << std::endl;
+		} else {
+			std::cout << "Error setting I/O priority for thread id = " << tid << std::endl;
+		}
+		
+		// Get I/O prio
+		int ret = syscall(SYS_ioprio_get, IOPRIO_WHO_PROCESS, tid);
+		if (ret == -1) {
+     		   std::cout << "Error getting I/O priority for tread id: " << tid << " - " << strerror(errno) << std::endl;
+		}
+		int ret_class = IOPRIO_PRIO_CLASS(ret);
+		int ret_data = IOPRIO_PRIO_DATA(ret);
+		std::cout << "Current I/O priority class: " << ret_class << ", data: " << ret_data << " for thread id = " << tid << std::endl;
+    	}
         std::set<Neighbor_Tag<TagT>> best;
 
         //search disk index and get top K tags
