@@ -1,338 +1,101 @@
-# DiskANN
-##Linux build:
+# SSD-based Dynamic Graph Vector Index Study
 
-Install the following packages through apt-get, and Intel MKL either by downloading the installer or using [apt](https://software.intel.com/en-us/articles/installing-intel-free-libs-and-python-apt-repo) (we tested with build 2019.4-070).
+This repository is a clone of FreshDiskANN (https://github.com/microsoft/DiskANN/tree/diskv2) system, which is a variant of DiskANN (NeurIPS 2019) supporting both vector search and vector updates. The compile and build instructions can be followed from the FreshDiskANN repo. We modified FreshDiskANN to fix some bugs. 
+
+All experiments are run on two different NVMe SSDs - NAND (3.84 TB Samsung PM9A1 SSD) and Optane (750 GB Intel P4800X NVMe SSD).
+
+To test with Linux I/O schedulers (Kyber and BFQ). Kyber does not require any code changes, and Kyber experiments were run on the `main` branch. We created another branch (`main_bfq`), which sets the priority of search and update threads to high-priority and best-effort, respectively, to test BFQ.
+
+The script (`sift_run.sh`) aids in running `test_concurr_merge_insert` from FreshDiskANN, which performs the concurrent vector search and vector update. This script helps modify the number of vectors inserted and deleted, and other parameters, while updating the index.
+
+## Further instructions
+
+### Test_concurr_merge_insert
+
+1. Performs merge concurrently with search
+2. `sift_run.sh` script can be used to run test_concurr_merge_insert
+3. Modifying threads  
+   - Search threads  
+		- Set NUM_SEARCH_THREADS to 8 in tests/test_concurr_merge_insert.cpp (line 35)  
+		- Set disk_search_nthreads to 8 in tests/test_concurr_merge_insert.cpp (line 760)  
+		- params[std::string("disk_search_nthreads")] = 8;  
+	- Delete threads
+		- Set NUM_DELETE_THREADS to 1 in tests/test_concurr_merge_insert.cpp (line 34)
+	- Insert threads
+		- Set NUM_INSERT_THREADS to 2 in tests/test_concurr_merge_insert.cpp (line 33)
+	- Merge threads
+		- Set the following to 10 or 20 based on the experiment in src/v2/index_merger.cpp (lines 30 - 32)
+
+	  	```
+		#define MAX_INSERT_THREADS (uint64_t) 10  
+		#define MAX_N_THREADS (uint64_t) 10  
+		#define NUM_INDEX_LOAD_THREADS (uint64_t) 10
+   		``` 
+
+	- Ensure all three variables have the same value
+
+4. Running test_concurr_merge_insert binary can be done by changing the threads as above and then updating sift_run.sh file based on appropriate configuration.
+5. Logs can be parsed using freshdiskann/search_phase.py as follows:
 ```
-sudo apt install cmake g++ libaio-dev libgoogle-perftools-dev clang-format-4.0
+python3 search_phase.py <file>
 ```
+6. To do `ramp-up`, set the number of vectors to be deleted to 0 in `sift_run.sh`. For `steady-state`, set the number of vectors to be inserted and deleted to the same values
+7. Modifying the number of merge threads and vectors inserted/deleted (e.g., 30,000 or 100,000 or 300,000) generate different workloads.
 
-Build
+### How to set/unset Linux I/O schedulers
+
+1. Check where the NVMe SSD is mounted and you are using for experiments (e.g., nvme0n1 or nvme1n1)
+2. Verify the current I/O scheduler on this disk (e.g., for nvme1n1)
 ```
-mkdir build && cd build && cmake .. && make -j 
-```
-
-##Windows build:
-
-The Windows version has been tested with the enterprise editions of Visual Studio 2017 and Visual Studio 2019
-
-**Prerequisites:**
-
-* Install CMAKE (v3.15.2 or later) from https://cmake.org
-* Install MKL from https://software.intel.com/en-us/mkl
-* Download boost (v1.71.0, later versions are not tested) from boost.org 
-
-* Environment variables: 
-    * Set a new System environment variable, called INTEL_ROOT to the "windows" folder under your MKL installation
-	   (For instance, if your install folder is "C:\Program Files (x86)\IntelSWtools", set INTEL_ROOT to "C:\Program Files (x86)\IntelSWtools\compilers_and_libraries\windows")
-    * Set BOOST_ROOT to your boost download folder
-
-**Build steps:**
--	Open a new developer command prompt
--	Create a "build" directory under diskann
--	Change to the "build" directory and run  
-```
-cmake -B. -A x64 ..
-```
-**Note: Since VS comes with its own (older) version of cmake, you have to specify the full path to cmake to ensure that the right version is used.**
--	This will create a “diskann” solution file.
--	Open the "diskann" solution and build the "diskpriority_io" and “nsg_dll” projects in order. 
-- 	Then build all the other binaries using the ALL_BUILD project that is part of the solution
-- 	Generated binaries are stored in the diskann/x64/Debug or diskann/x64/Release directories.
-
-To build from command line, change to the "build" directory and use msbuild to first build the "diskpriority_io" and "nsg_dll" projects. And then build the entire solution, as shown below.
-```
-msbuild src\dll\diskpriority_io.vcxproj
-msbuild src\dll\nsg_dll.vcxproj
-msbuild diskann.sln
-```
-Check msbuild docs for additional options including choosing between debug and release builds.
-
-
-##Usage:
-
-We now detail the main binaries using which one can build and search indices which reside in memory as well as SSD-resident indices.
-
-**Usage for SSD-based indices**
-===============================
-
-To generate an SSD-friendly index, use the `tests/build_disk_index` program. 
-----------------------------------------------------------------------------
-
-```
-./tests/build_disk_index  [data_type<float/int8/uint8>]  [data_file.bin]  [index_prefix_path]  [R]  [L]  [B]  [M]  [T]. 
+cat /sys/block/nvme1n1/queue/scheduler
 ```
 
-The arguments are as follows:
-
-(i) data_type:  The datatype is the type of dataset you wish to build an index. We support byte indices (signed int8 or unsigned uint8) or float indices. 
-
-(ii) data_file: The input data over which to build an index, in .bin format. The first 4 bytes represent number of points as integer. The next 4 bytes represent the dimension of data as integer. The following n*d*sizeof(T) bytes contain the contents of the data one data point in time. sizeof(T) is 1 for byte indices, and 4 for float indices. This will be read by the program as int8_t for signed indices, uint8_t for unsigned indices or float for float indices.
-
-(iii) index_prefix_path: the index will generate a few files, all beginning with the specified prefix path. For example, if you provide ~/index_test as the prefix path, build  generates files such as ~/index_test_pq_pivots.bin, ~/index_test_pq_compressed.bin, ~/index_test_disk.index, etc. There may be between 8 and 10 files generated with this prefix depending on how we construct the index.
-
-(iv) R: the degree of our graph index, typically between 60 and 150. Again, larger values will result in bigger indices (with longer indexing times), but better search quality. Try to ensure that the L value is at least the R value unless you need to build indices really quickly, but can somewhat compromise on quality. 
-
-(v) L: the size of search list we maintain during index building. Typical values are between 75 to 200. Larger values will take more time to build but result in indices that provide higher recall for the same search parameters.
-
-(vi) B: bound on the memory footprint of the index at search time. Once built, the index will use up only the specified RAM limit, the rest will reside on disk. This will dictate how aggressively we compress the data vectors to store in memory. Larger will yield better performance at search time.
-
-(vii) M: Limit on the memory allowed for building the index. If you specify a value less than what is required to build the index in one pass, the index is  built using a divide and conquer approach so that  sub-graphs will fit in the RAM budget. The sub-graphs are  stitched together to build the overall index. This approach can be upto 1.5 times slower than building the index in one shot. Try to allocate as much memory as possible for index build as your RAM allows.
-
-(viii) T: number of threads used by the index build process. Since the code is highly parallel, the  indexing time improves almost linearly with the number of threads (subject to the cores available on the machine).
-
-To search the SSD-index, use the `tests/search_disk_index` program. 
-----------------------------------------------------------------------------
-
+The output should be:
 ```
-./tests/search_disk_index  [index_type<float/int8/uint8>]  [index_prefix_path]  [num_nodes_to_cache]  [num_threads]  [beamwidth (use 0 to optimize internally)]  [query_file.bin]  [truthset.bin (use "null" for none)]  [K]  [result_output_prefix]  [L1]  [L2] etc.
+[none] mq-deadline kyber bfq
 ```
 
-The arguments are as follows:
+The above indicates that no I/O scheduler is active
 
-(i) data type: same as (i) above in building index.
-
-(ii) index_prefix_path: same as (iii) above in building index.
-
-(iii) num_nodes_to_cache: our program stores the entire graph on disk. For faster search performance, we provide the support to cache a few nodes (which are closest to the starting point) in memory. 
-
-(iv) num_threads: search using specified number of threads in parallel, one thread per query. More will result in more IOs, so find the balance depending on the bandwidth of the SSD.
-
-(v) beamwidth: maximum number of IO requests each query will issue per iteration of search code. Larger beamwidth williult in fewer IO round-trips per query, but might result in slightly higher number of IO requests to SSD per query. Specifying 0 will optimize the beamwidth depending on the number of threads performing search.
-
-(vi) query_file.bin: search on these queries, same format as data file (ii) above. The query file must be the same type as specified in (i).
-
-(vii) truthset.bin file. Must be in the following format, or specify "null": n, the number of queries (4 bytes) followed by d, the number of ground truth elements per query (4 bytes), followed by n*d entries per query representing the d closest IDs per query in integer format,  followed by n*d entries representing the corresponding distances (float). Total file size is 8 + 4*n*d + 4*n*d. The groundtruth file, if not available, can be calculated using our program, tests/utils/compute_groundtruth. If you just want to measure the latency numbers of search and output the nearest neighbors without calculating recall, enter "null".
-
-(viii) K: measure recall@k, meaning the accuracy of retrieving top-k nearest neighbors.
-
-(ix) result output prefix: search results will be stored in files with specified prefix, in bin format.
-
-(x, xi, ...) various search_list sizes to perform search with. Larger will result in slower latencies, but higher accuracies. Must be atleast the recall@ value in (vi).
-
-
-**Usage for in-memory indices**
-================================
-
-To generate index, use the `tests/build_memory_index` program. 
---------------------------------------------------------------
-
+3. To change from ‘none’ to kyber (for example), run the following:
 ```
-./tests/build_memory_index  [data_type<int8/uint8/float>]  [data_file.bin]  [output_index_file]  [R]  [L]  [alpha]  [num_threads_to_use]
+echo kyber | sudo tee /sys/block/nvme1n1/queue/scheduler
 ```
 
-The arguments are as follows:
-
-(i) data_type: same as (i) above in building disk index.
-
-(ii) data_file: same as (ii) above in building disk index, the input data file in .bin format of type int8/uint8/float.
-
-(iii) output_index_file: memory index will be saved here.
-
-(iv) R: max degree of index: larger is typically better, range (50-150). Preferrably ensure that L is at least R.
-
-(v) L: candidate_list_size for building index, larger is better (typical range: 75 to 200)
-
-(vi) alpha: float value which determines how dense our overall graph will be, and diameter will be log of n base alpha (roughly). Typical values are between 1 to 1.5. 1 will yield sparsest graph, 1.5 will yield denser graphs.
-
-(vii) number of threads to use: indexing uses specified number of threads.
-
-
-To search the generated index, use the `tests/search_memory_index` program:
----------------------------------------------------------------------------
-
+Verify if scheduler changed:
 ```
-./tests/search_memory_index  [index_type<float/int8/uint8>]  [data_file.bin]  [memory_index_path]  [query_file.bin]  [truthset.bin (use "null" for none)] [K]  [result_output_prefix]  [L1]  [L2] etc. 
+cat /sys/block/nvme1n1/queue/scheduler
+none mq-deadline [kyber] bfq
 ```
 
-The arguments are as follows:
-
-(i) data type: same as (i) above in building index.
-
-(ii) memory_index_path: enter path of index built (argument (iii) above in building memory index).
-
-(iii) query_bin: search on these queries, same format as data file (ii) above. The query file must be the same type as specified in (i).
-
-(iv) Truthset file. Must be in the following format: n, the number of queries (4 bytes) followed by d, the number of ground truth elements per query (4 bytes), followed by n*d entries per query representing the d closest IDs per query in integer format,  followed by n*d entries representing the corresponding distances (float). Total file size is 8 + 4*n*d + 4*n*d. The groundtruth file, if not available, can be calculated using our program, tests/utils/compute_groundtruth.
-
-(v) K: search for recall@k, meaning accuracy of retrieving top-k nearest neighbors.
-
-(vi) result output prefix: will search and store the computed results in the files with specified prefix in bin format.
-
-(vii, viii, ...) various search_list sizes to perform search with. Larger will result in slower latencies, but higher accuracies. Must be atleast the recall@ value in (vi).
-
-The goal of the project is to build scalable, performant and cost-effective approximate nearest neighbor search algorithms.
-The initial release has the in-memory version of the [DiskANN paper](https://papers.nips.cc/paper/9527-rand-nsg-fast-accurate-billion-point-nearest-neighbor-search-on-a-single-node.pdf) published in NeurIPS 2019. 
-This code reuses and builds upon some of the [code for NSG](https://github.com/ZJULearning/nsg) algoritm.
-
-This project has adopted the [Microsoft Open Source Code of Conduct](https://opensource.microsoft.com/codeofconduct/).
-For more information see the [Code of Conduct FAQ](https://opensource.microsoft.com/codeofconduct/faq/) or
-contact [opencode@microsoft.com](mailto:opencode@microsoft.com) with any additional questions or comments.
-
-See [guidelines](CONTRIBUTING.md) for contributing to this project.
-
-
-
-## Linux build:
-
-Install the following packages through apt-get, and Intel MKL either by downloading the installer or using [apt](https://software.intel.com/en-us/articles/installing-intel-free-libs-and-python-apt-repo) (we tested with build 2019.4-070).
+4. Repeat steps 1-3 to enable BFQ scheduler. Modify the BFQ parameters according to experiments-
 ```
-sudo apt install cmake g++ libaio-dev libgoogle-perftools-dev clang-format-4.0 libboost-dev
+low_latency
+strict_guarantees
+slice_idle
+```
+5. `low_latency` should be 0 and `strict_guarantees` should be 0
+To change `low_latency` from 1 change to 0 can be done and verified as follows:
+```
+cat /sys/block/nvme1n1/queue/iosched/low_latency
+1
+echo 0 | sudo tee /sys/block/nvme1n1/queue/iosched/low_latency
+cat /sys/block/nvme1n1/queue/iosched/low_latency 
+0
 ```
 
-Build
+5. Like step #5, ensure strict_guarantees to 0.
 ```
-mkdir build && cd build && cmake .. && make -j 
-```
-
-## Windows build:
-
-The Windows version has been tested with the Enterprise editions of Visual Studio 2017 and Visual Studio 2019. It should work with the Community and Professional editions as well without any changes. 
-
-**Prerequisites:**
-
-* Install CMAKE (v3.15.2 or later) from https://cmake.org
-* Install MKL from https://software.intel.com/en-us/mkl
-* Install/download Boost from https://www.boost.org
-
-* Environment variables: 
-    * Set a new System environment variable, called INTEL_ROOT to the "windows" folder under your MKL installation
-	   (For instance, if your install folder is "C:\Program Files (x86)\IntelSWtools", set INTEL_ROOT to "C:\Program Files (x86)\IntelSWtools\compilers_and_libraries\windows")
-    * Set environment variable BOOST_ROOT to your boost folder.
-
-**Build steps:**
--	Open a new command prompt window
--	Create a "build" directory under diskann
--	Change to the "build" directory and run  
-```
-<full-path-to-cmake>\cmake -G "Visual Studio 16 2019" -B. -A x64 ..
-```
-OR 
-```
-<full-path-to-cmake>\cmake -G "Visual Studio 15 2017" -B. -A x64 ..
+cat /sys/block/nvme1n1/queue/iosched/strict_guarantees 
+0
 ```
 
-**Note: Since VS comes with its own (older) version of cmake, you have to specify the full path to cmake to ensure that the right version is used.**
--	This will create a “diskann” solution file in the "build" directory
--	Open the "diskann" solution and build the “diskann” project. 
-- 	Then build all the other binaries using the ALL_BUILD project that is part of the solution
-- 	Generated binaries are stored in the diskann/x64/Debug or diskann/x64/Release directories.
-
-To build from command line, change to the "build" directory and use msbuild to first build the "diskpriority_io" and "diskann_dll" projects. And then build the entire solution, as shown below.
-```
-msbuild src\dll\diskann.vcxproj
-msbuild diskann.sln
-```
-Check msbuild docs for additional options including choosing between debug and release builds.
-
-
-## Usage:
-
-We now detail the main binaries using which one can build and search indices which reside in memory as well as SSD-resident indices.
-
-**Usage for SSD-based indices**
-===============================
-
-To generate an SSD-friendly index, use the `tests/build_disk_index` program. 
-----------------------------------------------------------------------------
+6. Similarly, change `slice_idle` based on the experiment and verify as follows:
 
 ```
-./tests/build_disk_index  [data_type<float/int8/uint8>]  [data_file.bin]  [index_prefix_path]  [R]  [L]  [B]  [M]  [T]. 
+cat /sys/block/nvme1n1/queue/iosched/slice_idle
+8
+echo 4 | sudo tee /sys/block/nvme1n1/queue/iosched/slice_idle
+cat /sys/block/nvme1n1/queue/iosched/slice_idle
+4
 ```
-
-The arguments are as follows:
-
-(i) data_type:  The datatype is the type of dataset you wish to build an index. We support byte indices (signed int8 or unsigned uint8) or float indices. 
-
-(ii) data_file: The input data over which to build an index, in .bin format. The first 4 bytes represent number of points as integer. The next 4 bytes represent the dimension of data as integer. The following n*d*sizeof(T) bytes contain the contents of the data one data point in time. sizeof(T) is 1 for byte indices, and 4 for float indices. This will be read by the program as int8_t for signed indices, uint8_t for unsigned indices or float for float indices.
-
-(iii) index_prefix_path: the index will generate a few files, all beginning with the specified prefix path. For example, if you provide ~/index_test as the prefix path, build  generates files such as ~/index_test_pq_pivots.bin, ~/index_test_pq_compressed.bin, ~/index_test_disk.index, etc. There may be between 8 and 10 files generated with this prefix depending on how we construct the index.
-
-(iv) R: the degree of our graph index, typically between 60 and 150. Again, larger values will result in bigger indices (with longer indexing times), but better search quality. Try to ensure that the L value is at least the R value unless you need to build indices really quickly, but can somewhat compromise on quality. 
-
-(v) L: the size of search list we maintain during index building. Typical values are between 75 to 200. Larger values will take more time to build but result in indices that provide higher recall for the same search parameters.
-
-(vi) B: bound on the memory footprint of the index at search time. Once built, the index will use up only the specified RAM limit, the rest will reside on disk. This will dictate how aggressively we compress the data vectors to store in memory. Larger will yield better performance at search time.
-
-(vii) M: Limit on the memory allowed for building the index. If you specify a value less than what is required to build the index in one pass, the index is  built using a divide and conquer approach so that  sub-graphs will fit in the RAM budget. The sub-graphs are  stitched together to build the overall index. This approach can be upto 1.5 times slower than building the index in one shot. Try to allocate as much memory as possible for index build as your RAM allows.
-
-(viii) T: number of threads used by the index build process. Since the code is highly parallel, the  indexing time improves almost linearly with the number of threads (subject to the cores available on the machine).
-
-To search the SSD-index, use the `tests/search_disk_index` program. 
-----------------------------------------------------------------------------
-
-```
-./tests/search_disk_index  [index_type<float/int8/uint8>]  [index_prefix_path]  [num_nodes_to_cache]  [num_threads]  [beamwidth (use 0 to optimize internally)]  [query_file.bin]  [truthset.bin (use "null" for none)]  [K]  [result_output_prefix]  [L1]  [L2] etc.
-```
-
-The arguments are as follows:
-
-(i) data type: same as (i) above in building index.
-
-(ii) index_prefix_path: same as (iii) above in building index.
-
-(iii) num_nodes_to_cache: our program stores the entire graph on disk. For faster search performance, we provide the support to cache a few nodes (which are closest to the starting point) in memory. 
-
-(iv) num_threads: search using specified number of threads in parallel, one thread per query. More will result in more IOs, so find the balance depending on the bandwidth of the SSD.
-
-(v) beamwidth: maximum number of IO requests each query will issue per iteration of search code. Larger beamwidth williult in fewer IO round-trips per query, but might result in slightly higher number of IO requests to SSD per query. Specifying 0 will optimize the beamwidth depending on the number of threads performing search.
-
-(vi) query_file.bin: search on these queries, same format as data file (ii) above. The query file must be the same type as specified in (i).
-
-(vii) truthset.bin file. Must be in the following format, or specify "null": n, the number of queries (4 bytes) followed by d, the number of ground truth elements per query (4 bytes), followed by n*d entries per query representing the d closest IDs per query in integer format,  followed by n*d entries representing the corresponding distances (float). Total file size is 8 + 4*n*d + 4*n*d. The groundtruth file, if not available, can be calculated using our program, tests/utils/compute_groundtruth. If you just want to measure the latency numbers of search and output the nearest neighbors without calculating recall, enter "null".
-
-(viii) K: measure recall@k, meaning the accuracy of retrieving top-k nearest neighbors.
-
-(ix) result output prefix: search results will be stored in files with specified prefix, in bin format.
-
-(x, xi, ...) various search_list sizes to perform search with. Larger will result in slower latencies, but higher accuracies. Must be atleast the recall@ value in (vi).
-
-
-**Usage for in-memory indices**
-================================
-
-To generate index, use the `tests/build_memory_index` program. 
---------------------------------------------------------------
-
-```
-./tests/build_memory_index  [data_type<int8/uint8/float>]  [data_file.bin]  [output_index_file]  [R]  [L]  [alpha]  [num_threads_to_use]
-```
-
-The arguments are as follows:
-
-(i) data_type: same as (i) above in building disk index.
-
-(ii) data_file: same as (ii) above in building disk index, the input data file in .bin format of type int8/uint8/float.
-
-(iii) output_index_file: memory index will be saved here.
-
-(iv) R: max degree of index: larger is typically better, range (50-150). Preferrably ensure that L is at least R.
-
-(v) L: candidate_list_size for building index, larger is better (typical range: 75 to 200)
-
-(vi) alpha: float value which determines how dense our overall graph will be, and diameter will be log of n base alpha (roughly). Typical values are between 1 to 1.5. 1 will yield sparsest graph, 1.5 will yield denser graphs.
-
-(vii) number of threads to use: indexing uses specified number of threads.
-
-
-To search the generated index, use the `tests/search_memory_index` program:
----------------------------------------------------------------------------
-
-```
-./tests/search_memory_index  [index_type<float/int8/uint8>]  [data_file.bin]  [memory_index_path]  [query_file.bin]  [truthset.bin (use "null" for none)] [K]  [result_output_prefix]  [L1]  [L2] etc. 
-```
-
-The arguments are as follows:
-
-(i) data type: same as (i) above in building index.
-
-(ii) memory_index_path: enter path of index built (argument (iii) above in building memory index).
-
-(iii) query_bin: search on these queries, same format as data file (ii) above. The query file must be the same type as specified in (i).
-
-(iv) Truthset file. Must be in the following format: n, the number of queries (4 bytes) followed by d, the number of ground truth elements per query (4 bytes), followed by n*d entries per query representing the d closest IDs per query in integer format,  followed by n*d entries representing the corresponding distances (float). Total file size is 8 + 4*n*d + 4*n*d. The groundtruth file, if not available, can be calculated using our program, tests/utils/compute_groundtruth.
-
-(v) K: search for recall@k, meaning accuracy of retrieving top-k nearest neighbors.
-
-(vi) result output prefix: will search and store the computed results in the files with specified prefix in bin format.
-
-(vii, viii, ...) various search_list sizes to perform search with. Larger will result in slower latencies, but higher accuracies. Must be atleast the recall@ value in (vi).
