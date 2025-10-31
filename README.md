@@ -18,13 +18,13 @@ The script (`sift_run.sh`) aids in running `test_concurr_merge_insert` from Fres
 2. `sift_run.sh` script can be used to run test_concurr_merge_insert
 3. Modifying threads  
    - Search threads  
-		- Set NUM_SEARCH_THREADS to 8 in tests/test_concurr_merge_insert.cpp (line 35)  
-		- Set disk_search_nthreads to 8 in tests/test_concurr_merge_insert.cpp (line 760)  
+		- Set `NUM_SEARCH_THREADS` to 8 in tests/test_concurr_merge_insert.cpp (line 35)  
+		- Set `disk_search_nthreads` to 8 in tests/test_concurr_merge_insert.cpp (line 760)  
 		- params[std::string("disk_search_nthreads")] = 8;  
 	- Delete threads
-		- Set NUM_DELETE_THREADS to 1 in tests/test_concurr_merge_insert.cpp (line 34)
+		- Set `NUM_DELETE_THREADS` to 1 in tests/test_concurr_merge_insert.cpp (line 34)
 	- Insert threads
-		- Set NUM_INSERT_THREADS to 2 in tests/test_concurr_merge_insert.cpp (line 33)
+		- Set `NUM_INSERT_THREADS` to 2 in tests/test_concurr_merge_insert.cpp (line 33)
 	- Merge threads
 		- Set the following to 10 or 20 based on the experiment in src/v2/index_merger.cpp (lines 30 - 32)
 
