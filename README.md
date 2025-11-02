@@ -103,3 +103,16 @@ cat /sys/block/nvme1n1/queue/iosched/slice_idle
 ```
 
 ### fio experiments
+
+The fio jobfiles in the fio_files directory can be used to run our fio configurations. In the paper, we perform both latency and bandwidth experiments. The directory contains 2 files, one for latency `latency_test.fio` and one for bandwidth `bandwidth_test.fio`. 
+
+You will need to change some parameters in the script to match your machine setup first before running. Namely, the `filename` parameter needs to be changed. You can pass the device directly here, or create an fio data file in your storage media and pass the directory to that file.
+
+Next, modify the `numa_mem_policy` and `cpus_allowed` parameters to match your storage media with the correct numa node for your CPU.
+
+You can then run the jobfile as shown below:
+```
+fio fio_files/bandwidth_test.fio
+```
+
+To reproduce the numbers in the paper, you will need to change the parameters according to the experiment. For example, the bandwidth experiment features varying mixed read/write ratio. To reproduce this, simply change the `rwmixread` parameter accordingly. For example, `rwmixread=100` means 100 reads and 0 writes. 
